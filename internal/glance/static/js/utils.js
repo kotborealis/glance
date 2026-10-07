@@ -2,9 +2,10 @@ export function throttledDebounce(callback, maxDebounceTimes, debounceDelay) {
     let debounceTimeout;
     let timesDebounced = 0;
 
-    return function () {
+    const debounced = function () {
         if (timesDebounced == maxDebounceTimes) {
             clearTimeout(debounceTimeout);
+            debounceTimeout = undefined;
             timesDebounced = 0;
             callback();
             return;
@@ -14,10 +15,19 @@ export function throttledDebounce(callback, maxDebounceTimes, debounceDelay) {
         timesDebounced++;
 
         debounceTimeout = setTimeout(() => {
+            debounceTimeout = undefined;
             timesDebounced = 0;
             callback();
         }, debounceDelay);
     };
+
+    debounced.cancel = () => {
+        clearTimeout(debounceTimeout);
+        debounceTimeout = undefined;
+        timesDebounced = 0;
+    };
+
+    return debounced;
 };
 
 export function isElementVisible(element) {

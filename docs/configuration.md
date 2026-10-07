@@ -562,6 +562,7 @@ pages:
 | width | string | no | |
 | desktop-navigation-width | string | no | |
 | center-vertically | boolean | no | false |
+| refresh-interval | duration | no | |
 | hide-desktop-navigation | boolean | no | false |
 | show-mobile-header | boolean | no | false |
 | head-widgets | array | no | |
@@ -591,6 +592,9 @@ Here are the pixel equivalents for each value:
 
 #### `center-vertically`
 When set to `true`, vertically centers the content on the page. Has no effect if the content is taller than the height of the viewport.
+
+#### `refresh-interval`
+When set to a positive duration up to `24d`, refreshes the page content in place at that interval, without reloading the document or changing the current page, theme, or scroll position. Durations use seconds (`s`), minutes (`m`), hours (`h`), or days (`d`), such as `5m`. Omit the option or set it to `0s` to disable automatic refresh. Interactions and local state within replaced widgets (for example, an open group tab) may reset.
 
 #### `hide-desktop-navigation`
 Whether to show the navigation links at the top of the page on desktop.

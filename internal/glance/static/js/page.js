@@ -1,19 +1,30 @@
-import { setupPopovers } from './popover.js';
-import { setupMasonries } from './masonry.js';
+import { setupPopovers, cleanupPopovers } from './popover.js';
+import { setupMasonries, cleanupMasonries } from './masonry.js';
+import { cleanupTodos } from './todo.js';
 import { throttledDebounce, isElementVisible, openURLInNewTab } from './utils.js';
 import { elem, find, findAll } from './templating.js';
 
 async function fetchPageContent(pageData) {
-    // TODO: handle non 200 status codes/time outs
-    // TODO: add retries
-    const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/content/`);
-    const content = await response.text();
-
-    return content;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+        const response = await fetch(`${pageData.baseURL}/api/pages/${encodeURIComponent(pageData.slug)}/content/`, {
+            credentials: "same-origin",
+            signal: controller.signal,
+        });
+        if (!response.ok) {
+            throw new Error(`Page content request failed: ${response.status} ${response.statusText}`);
+        }
+        return await response.text();
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
-function setupCarousels() {
-    const carouselElements = document.getElementsByClassName("carousel-container");
+let carouselResizeListenerInstalled = false;
+
+function setupCarousels(root) {
+    const carouselElements = root.getElementsByClassName("carousel-container");
 
     if (carouselElements.length == 0) {
         return;
@@ -41,9 +52,16 @@ function setupCarousels() {
         const determineSideCutoffsRateLimited = throttledDebounce(determineSideCutoffs, 20, 100);
 
         itemsContainer.addEventListener("scroll", determineSideCutoffsRateLimited);
-        window.addEventListener("resize", determineSideCutoffsRateLimited);
-
         afterContentReady(determineSideCutoffs);
+    }
+
+    if (!carouselResizeListenerInstalled) {
+        window.addEventListener("resize", () => {
+            document.querySelectorAll(".carousel-container .carousel-items-container").forEach((items) => {
+                items.dispatchEvent(new Event("scroll"));
+            });
+        });
+        carouselResizeListenerInstalled = true;
     }
 }
 
@@ -95,8 +113,10 @@ function updateRelativeTimeForElements(elements)
     }
 }
 
-function setupSearchBoxes() {
-    const searchWidgets = document.getElementsByClassName("search");
+let searchShortcutListenerInstalled = false;
+
+function setupSearchBoxes(root) {
+    const searchWidgets = root.getElementsByClassName("search");
 
     if (searchWidgets.length == 0) {
         return;
@@ -184,73 +204,63 @@ function setupSearchBoxes() {
             changeCurrentBang(null);
         };
 
-        inputElement.addEventListener("focus", () => {
-            document.addEventListener("keydown", handleKeyDown);
-            document.addEventListener("input", handleInput);
-        });
-        inputElement.addEventListener("blur", () => {
-            document.removeEventListener("keydown", handleKeyDown);
-            document.removeEventListener("input", handleInput);
-        });
-
-        document.addEventListener("keydown", (event) => {
-            if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-            if (event.code != "KeyS") return;
-
-            inputElement.focus();
-            event.preventDefault();
-        });
+        inputElement.addEventListener("keydown", handleKeyDown);
+        inputElement.addEventListener("input", handleInput);
 
         kbdElement.addEventListener("mousedown", () => {
             requestAnimationFrame(() => inputElement.focus());
         });
     }
+
+    if (!searchShortcutListenerInstalled) {
+        document.addEventListener("keydown", (event) => {
+            if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) || event.code != "KeyS") return;
+            const input = document.querySelector(".search .search-input");
+            if (!input) return;
+            input.focus();
+            event.preventDefault();
+        });
+        searchShortcutListenerInstalled = true;
+    }
 }
+
+let relativeTimeTimer = null;
+let relativeTimeListenerInstalled = false;
 
 function setupDynamicRelativeTime() {
-    const elements = document.querySelectorAll("[data-dynamic-relative-time]");
+    if (!document.querySelector("#page-content [data-dynamic-relative-time]")) return;
     const updateInterval = 60 * 1000;
-    let lastUpdateTime = Date.now();
-
-    updateRelativeTimeForElements(elements);
 
     const updateElementsAndTimestamp = () => {
-        updateRelativeTimeForElements(elements);
-        lastUpdateTime = Date.now();
+        updateRelativeTimeForElements(document.querySelectorAll("#page-content [data-dynamic-relative-time]"));
     };
 
-    const scheduleRepeatingUpdate = () => setInterval(updateElementsAndTimestamp, updateInterval);
+    if (!relativeTimeListenerInstalled) {
+        const scheduleRepeatingUpdate = () => relativeTimeTimer = setInterval(updateElementsAndTimestamp, updateInterval);
 
-    if (document.hidden === undefined) {
-        scheduleRepeatingUpdate();
-        return;
+        if (document.hidden === undefined) {
+            scheduleRepeatingUpdate();
+        } else {
+            scheduleRepeatingUpdate();
+            document.addEventListener("visibilitychange", () => {
+                if (document.hidden) {
+                    clearInterval(relativeTimeTimer);
+                    return;
+                }
+
+                updateElementsAndTimestamp();
+                clearInterval(relativeTimeTimer);
+                relativeTimeTimer = setInterval(updateElementsAndTimestamp, updateInterval);
+            });
+        }
+        relativeTimeListenerInstalled = true;
     }
 
-    let timeout = scheduleRepeatingUpdate();
-
-    document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-            clearTimeout(timeout);
-            return;
-        }
-
-        const delta = Date.now() - lastUpdateTime;
-
-        if (delta >= updateInterval) {
-            updateElementsAndTimestamp();
-            timeout = scheduleRepeatingUpdate();
-            return;
-        }
-
-        timeout = setTimeout(() => {
-            updateElementsAndTimestamp();
-            timeout = scheduleRepeatingUpdate();
-        }, updateInterval - delta);
-    });
+    updateElementsAndTimestamp();
 }
 
-function setupGroups() {
-    const groups = document.getElementsByClassName("widget-type-group");
+function setupGroups(root) {
+    const groups = root.getElementsByClassName("widget-type-group");
 
     if (groups.length == 0) {
         return;
@@ -309,8 +319,8 @@ function setupGroups() {
     }
 }
 
-function setupLazyImages() {
-    const images = document.querySelectorAll("img[loading=lazy]");
+function setupLazyImages(root) {
+    const images = root.querySelectorAll("img[loading=lazy]");
 
     if (images.length == 0) {
         return;
@@ -384,8 +394,8 @@ function attachExpandToggleButton(collapsibleContainer) {
 };
 
 
-function setupCollapsibleLists() {
-    const collapsibleLists = document.querySelectorAll(".list.collapsible-container");
+function setupCollapsibleLists(root) {
+    const collapsibleLists = root.querySelectorAll(".list.collapsible-container");
 
     if (collapsibleLists.length == 0) {
         return;
@@ -418,8 +428,11 @@ function setupCollapsibleLists() {
     }
 }
 
-function setupCollapsibleGrids() {
-    const collapsibleGridElements = document.querySelectorAll(".cards-grid.collapsible-container");
+const contentObservers = new Set();
+const contentCleanupCallbacks = new Set();
+
+function setupCollapsibleGrids(root) {
+    const collapsibleGridElements = root.querySelectorAll(".cards-grid.collapsible-container");
 
     if (collapsibleGridElements.length == 0) {
         return;
@@ -488,12 +501,13 @@ function setupCollapsibleGrids() {
             cardsPerRow = newCardsPerRow;
             resolveCollapsibleItems();
         });
+        contentObservers.add(observer);
 
         afterContentReady(() => observer.observe(gridElement));
     }
 }
 
-const contentReadyCallbacks = [];
+let contentReadyCallbacks = [];
 
 function afterContentReady(callback) {
     contentReadyCallbacks.push(callback);
@@ -571,80 +585,74 @@ function zoneDiffText(diffInMinutes) {
     return { text: `${sign}${hours}h~`, title: `${hours} hour${hourSuffix} and ${minutes} minutes ${signText}` };
 }
 
-function setupClocks() {
-    const clocks = document.getElementsByClassName('clock');
+const clockUpdaters = new WeakMap();
+let clockTimer = null;
 
-    if (clocks.length == 0) {
+function setupClocks(root) {
+    if (root.querySelectorAll(".clock").length === 0) {
+        if (clockTimer !== null) clearTimeout(clockTimer);
+        clockTimer = null;
         return;
-    }
-
-    const updateCallbacks = [];
-
-    for (var i = 0; i < clocks.length; i++) {
-        const clock = clocks[i];
-        const hourFormat = clock.dataset.hourFormat;
-        const localTimeContainer = clock.querySelector('[data-local-time]');
-        const localDateElement = localTimeContainer.querySelector('[data-date]');
-        const localWeekdayElement = localTimeContainer.querySelector('[data-weekday]');
-        const localYearElement = localTimeContainer.querySelector('[data-year]');
-        const timeZoneContainers = clock.querySelectorAll('[data-time-in-zone]');
-
-        const setLocalTime = makeSettableTimeElement(
-            localTimeContainer.querySelector('[data-time]'),
-            hourFormat
-        );
-
-        updateCallbacks.push((now) => {
-            setLocalTime(now);
-            localDateElement.textContent = now.getDate() + ' ' + monthNames[now.getMonth()];
-            localWeekdayElement.textContent = weekDayNames[now.getDay()];
-            localYearElement.textContent = now.getFullYear();
-        });
-
-        for (var z = 0; z < timeZoneContainers.length; z++) {
-            const timeZoneContainer = timeZoneContainers[z];
-            const diffElement = timeZoneContainer.querySelector('[data-time-diff]');
-
-            const setZoneTime = makeSettableTimeElement(
-                timeZoneContainer.querySelector('[data-time]'),
-                hourFormat
-            );
-
-            updateCallbacks.push((now) => {
-                const { time, diffInMinutes } = timeInZone(now, timeZoneContainer.dataset.timeInZone);
-                setZoneTime(time);
-                const { text, title } = zoneDiffText(diffInMinutes);
-                diffElement.textContent = text;
-                diffElement.title = title;
-            });
-        }
     }
 
     const updateClocks = () => {
         const now = new Date();
-
-        for (var i = 0; i < updateCallbacks.length; i++)
-            updateCallbacks[i](now);
-
-        setTimeout(updateClocks, (60 - now.getSeconds()) * 1000);
+        document.querySelectorAll("#page-content .clock").forEach((clock) => {
+            let updater = clockUpdaters.get(clock);
+            if (!updater) {
+                const hourFormat = clock.dataset.hourFormat;
+                const localTime = clock.querySelector('[data-local-time]');
+                const localDate = localTime.querySelector('[data-date]');
+                const weekday = localTime.querySelector('[data-weekday]');
+                const year = localTime.querySelector('[data-year]');
+                const setLocalTime = makeSettableTimeElement(localTime.querySelector('[data-time]'), hourFormat);
+                const zones = Array.from(clock.querySelectorAll('[data-time-in-zone]')).map((zone) => {
+                    const setTime = makeSettableTimeElement(zone.querySelector('[data-time]'), hourFormat);
+                    const diff = zone.querySelector('[data-time-diff]');
+                    return (currentTime) => {
+                        const { time, diffInMinutes } = timeInZone(currentTime, zone.dataset.timeInZone);
+                        setTime(time);
+                        const text = zoneDiffText(diffInMinutes);
+                        diff.textContent = text.text || "";
+                        diff.title = text.title || "";
+                    };
+                });
+                updater = (currentTime) => {
+                    setLocalTime(currentTime);
+                    localDate.textContent = currentTime.getDate() + ' ' + monthNames[currentTime.getMonth()];
+                    weekday.textContent = weekDayNames[currentTime.getDay()];
+                    year.textContent = currentTime.getFullYear();
+                    zones.forEach((update) => update(currentTime));
+                };
+                clockUpdaters.set(clock, updater);
+            }
+            updater(now);
+        });
+        clockTimer = setTimeout(updateClocks, (60 - now.getSeconds()) * 1000);
     };
 
+    if (clockTimer !== null) clearTimeout(clockTimer);
+    root.querySelectorAll(".clock").forEach((clock) => clockUpdaters.delete(clock));
     updateClocks();
 }
 
-async function setupCalendars() {
-    const elems = document.getElementsByClassName("calendar");
+async function setupCalendars(root) {
+    const elems = root.getElementsByClassName("calendar");
     if (elems.length == 0) return;
 
     // TODO: implement prefetching, currently loads as a nasty waterfall of requests
     const calendar = await import ('./calendar.js');
 
-    for (let i = 0; i < elems.length; i++)
-        calendar.default(elems[i]);
+    for (let i = 0; i < elems.length; i++) {
+        const initialized = calendar.default(elems[i]);
+        if (initialized?.component?.suspend) {
+            contentCleanupCallbacks.add(() => initialized.component.suspend());
+        }
+    }
 }
 
-async function setupTodos() {
-    const elems = Array.from(document.getElementsByClassName("todo"));
+async function setupTodos(root) {
+    const elems = Array.from(root.getElementsByClassName("todo"));
     if (elems.length == 0) return;
 
     const todo = await import ('./todo.js');
@@ -654,8 +662,8 @@ async function setupTodos() {
     }
 }
 
-function setupTruncatedElementTitles() {
-    const elements = document.querySelectorAll(".text-truncate, .single-line-titles .title, .text-truncate-2-lines, .text-truncate-3-lines");
+function setupTruncatedElementTitles(root) {
+    const elements = root.querySelectorAll(".text-truncate, .single-line-titles .title, .text-truncate-2-lines, .text-truncate-3-lines");
 
     if (elements.length == 0) {
         return;
@@ -744,44 +752,125 @@ function initThemePicker() {
     })
 }
 
+function cleanupPageContent(root) {
+    cleanupPopovers(root);
+    contentCleanupCallbacks.forEach((cleanup) => cleanup());
+    contentCleanupCallbacks.clear();
+    contentObservers.forEach((observer) => observer.disconnect());
+    contentObservers.clear();
+    cleanupMasonries();
+    cleanupTodos();
+    contentReadyCallbacks = [];
+}
+
+async function initializePageContent(root) {
+    setupPopovers(root);
+    setupClocks(root);
+    await setupCalendars(root);
+    await setupTodos(root);
+    setupCarousels(root);
+    setupSearchBoxes(root);
+    setupCollapsibleLists(root);
+    setupCollapsibleGrids(root);
+    setupGroups(root);
+    setupMasonries(root);
+    setupDynamicRelativeTime();
+    setupLazyImages(root);
+
+    const callbacks = contentReadyCallbacks;
+    contentReadyCallbacks = [];
+    callbacks.forEach((callback) => callback());
+    setupTruncatedElementTitles(root);
+}
+
+async function refreshPageContent(root) {
+    if (pageData.refreshInterval <= 0) return;
+
+    const countdown = document.getElementById("refresh-countdown");
+    const refreshIntervalMs = pageData.refreshInterval * 1000;
+    let refreshDeadline = Date.now() + refreshIntervalMs;
+    let resolveRefreshDeadline = null;
+
+    const updateCountdown = () => {
+        const secondsRemaining = Math.max(0, Math.ceil((refreshDeadline - Date.now()) / 1000));
+        if (countdown) countdown.textContent = `${secondsRemaining}s`;
+        if (secondsRemaining === 0 && resolveRefreshDeadline) {
+            const resolve = resolveRefreshDeadline;
+            resolveRefreshDeadline = null;
+            resolve();
+        }
+    };
+
+    updateCountdown();
+    const countdownTimer = setInterval(updateCountdown, 1000);
+    const resetCountdown = () => {
+        refreshDeadline = Date.now() + refreshIntervalMs;
+        updateCountdown();
+    };
+
+    while (pageData.refreshInterval > 0) {
+        await new Promise((resolve) => { resolveRefreshDeadline = resolve; });
+        if (hasFocusedEditableContent(root)) {
+            resetCountdown();
+            continue;
+        }
+
+        let html;
+        try {
+            html = await fetchPageContent(pageData);
+        } catch (error) {
+            console.warn(error);
+            resetCountdown();
+            continue;
+        }
+        if (hasFocusedEditableContent(root)) {
+            resetCountdown();
+            continue;
+        }
+
+        const scrollY = window.scrollY;
+        cleanupPageContent(root);
+        root.innerHTML = html;
+        try {
+            await initializePageContent(root);
+        } catch (error) {
+            console.error("Failed to initialize refreshed page content", error);
+        } finally {
+            window.scrollTo(0, scrollY);
+            resetCountdown();
+        }
+    }
+
+    clearInterval(countdownTimer);
+}
+
+function hasFocusedEditableContent(root) {
+    const activeElement = document.activeElement;
+    return root.contains(activeElement) && (
+        activeElement instanceof HTMLInputElement ||
+        activeElement instanceof HTMLTextAreaElement ||
+        activeElement.isContentEditable
+    );
+}
+
 async function setupPage() {
     initThemePicker();
-
     const pageElement = document.getElementById("page");
     const pageContentElement = document.getElementById("page-content");
-    const pageContent = await fetchPageContent(pageData);
-
-    pageContentElement.innerHTML = pageContent;
 
     try {
-        setupPopovers();
-        setupClocks()
-        await setupCalendars();
-        await setupTodos();
-        setupCarousels();
-        setupSearchBoxes();
-        setupCollapsibleLists();
-        setupCollapsibleGrids();
-        setupGroups();
-        setupMasonries();
-        setupDynamicRelativeTime();
-        setupLazyImages();
+        pageContentElement.innerHTML = await fetchPageContent(pageData);
+        await initializePageContent(pageContentElement);
+    } catch (error) {
+        console.error("Failed to load page content", error);
+        pageContentElement.textContent = "Failed to load page content.";
     } finally {
         pageElement.classList.add("content-ready");
         pageElement.setAttribute("aria-busy", "false");
-
-        for (let i = 0; i < contentReadyCallbacks.length; i++) {
-            contentReadyCallbacks[i]();
-        }
-
-        setTimeout(() => {
-            setupTruncatedElementTitles();
-        }, 50);
-
-        setTimeout(() => {
-            document.body.classList.add("page-columns-transitioned");
-        }, 300);
+        setTimeout(() => document.body.classList.add("page-columns-transitioned"), 300);
     }
+
+    refreshPageContent(pageContentElement);
 }
 
 setupPage();

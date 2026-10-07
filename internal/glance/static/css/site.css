@@ -402,6 +402,14 @@ kbd:active {
     transition: opacity .3s;
 }
 
+.refresh-countdown {
+    color: var(--color-text-subdue);
+    font-size: 0.8rem;
+    white-space: nowrap;
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+}
+
 .theme-picker.popover-active .current-theme-preview, .theme-picker:hover {
     opacity: 1;
 }

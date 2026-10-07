@@ -30,7 +30,7 @@ const [datesEntranceLeft, datesEntranceRight] = directions(
 const undoEntrance = slideFade({ direction: "left", distance: "100%", duration: 300 });
 
 export default function(element) {
-    element.swapWith(Calendar(
+    return element.swapWith(Calendar(
         Number(element.dataset.firstDayOfWeek ?? 1)
     ));
 }

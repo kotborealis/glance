@@ -21,6 +21,8 @@ import (
 
 const CONFIG_INCLUDE_RECURSION_DEPTH_LIMIT = 20
 
+const maxPageRefreshInterval = 24 * 24 * time.Hour
+
 const (
 	configVarTypeEnv         = "env"
 	configVarTypeSecret      = "secret"
@@ -75,14 +77,15 @@ type user struct {
 }
 
 type page struct {
-	Title                  string  `yaml:"name"`
-	Slug                   string  `yaml:"slug"`
-	Width                  string  `yaml:"width"`
-	DesktopNavigationWidth string  `yaml:"desktop-navigation-width"`
-	ShowMobileHeader       bool    `yaml:"show-mobile-header"`
-	HideDesktopNavigation  bool    `yaml:"hide-desktop-navigation"`
-	CenterVertically       bool    `yaml:"center-vertically"`
-	HeadWidgets            widgets `yaml:"head-widgets"`
+	Title                  string        `yaml:"name"`
+	Slug                   string        `yaml:"slug"`
+	Width                  string        `yaml:"width"`
+	DesktopNavigationWidth string        `yaml:"desktop-navigation-width"`
+	ShowMobileHeader       bool          `yaml:"show-mobile-header"`
+	HideDesktopNavigation  bool          `yaml:"hide-desktop-navigation"`
+	CenterVertically       bool          `yaml:"center-vertically"`
+	RefreshInterval        durationField `yaml:"refresh-interval"`
+	HeadWidgets            widgets       `yaml:"head-widgets"`
 	Columns                []struct {
 		Size    string  `yaml:"size"`
 		Widgets widgets `yaml:"widgets"`
@@ -488,6 +491,13 @@ func isConfigStateValid(config *config) error {
 
 		if page.Title == "" {
 			return fmt.Errorf("page %d has no name", i+1)
+		}
+
+		if page.RefreshInterval < 0 {
+			return fmt.Errorf("page %d: refresh-interval must not be negative", i+1)
+		}
+		if time.Duration(page.RefreshInterval) > maxPageRefreshInterval {
+			return fmt.Errorf("page %d: refresh-interval must not exceed 24d", i+1)
 		}
 
 		if page.Width != "" && (page.Width != "wide" && page.Width != "slim" && page.Width != "default") {

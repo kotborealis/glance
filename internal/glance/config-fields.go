@@ -97,6 +97,10 @@ var durationFieldPattern = regexp.MustCompile(`^(\d+)(s|m|h|d)$`)
 
 type durationField time.Duration
 
+func (d durationField) Seconds() float64 {
+	return time.Duration(d).Seconds()
+}
+
 func (d *durationField) UnmarshalYAML(node *yaml.Node) error {
 	var value string
 
@@ -115,16 +119,22 @@ func (d *durationField) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 
+	var unit time.Duration
 	switch matches[2] {
 	case "s":
-		*d = durationField(time.Duration(duration) * time.Second)
+		unit = time.Second
 	case "m":
-		*d = durationField(time.Duration(duration) * time.Minute)
+		unit = time.Minute
 	case "h":
-		*d = durationField(time.Duration(duration) * time.Hour)
+		unit = time.Hour
 	case "d":
-		*d = durationField(time.Duration(duration) * 24 * time.Hour)
+		unit = 24 * time.Hour
 	}
+
+	if time.Duration(duration) > time.Duration(1<<63-1)/unit {
+		return fmt.Errorf("duration is too large: %s", value)
+	}
+	*d = durationField(time.Duration(duration) * unit)
 
 	return nil
 }

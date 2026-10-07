@@ -6,6 +6,7 @@
     if (navigator.platform === 'iPhone') document.documentElement.classList.add('ios');
     const pageData = {
         /*{{ if .Page }}*/slug: "{{ .Page.Slug }}",/*{{ end }}*/
+        /*{{ if .Page }}*/refreshInterval: {{ .Page.RefreshInterval.Seconds }},/*{{ end }}*/
         baseURL: "{{ .App.Config.Server.BaseURL }}",
         theme: "{{ .Request.Theme.Key }}",
     };
